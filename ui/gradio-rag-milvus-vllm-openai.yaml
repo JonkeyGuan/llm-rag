@@ -1,0 +1,212 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: collections
+data:
+  collections.json: |-
+    [
+      {"name":"none","display_name":"None"},
+      {"name":"collection_nomicai_embeddings","display_name":"collection_nomicai_embeddings"}
+    ]
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: prompt
+data:
+  prompt.txt: |-
+    <s>[INST] <<SYS>>
+    你是一个乐于助人、尊重他人、诚实的助手，名叫：小助手，正在回答问题。
+    
+    您将得到一个需要回答的问题，以及一个为您提供信息的上下文。您必须尽可能根据此上下文回答问题。
+    
+    在保证安全的情况下，始终尽可能提供有用的答案。您的答案不应包含任何有害、不道德、种族主义、性别歧视、有毒、危险或非法的内容。请确保您的回答在社会上不偏不倚，并且本质上是积极的。
+    
+    请用中文回答问题。
+    
+    如果问题没有任何意义，或者事实不连贯，请解释原因，而不是回答不正确的内容。如果您不知道问题的答案，请不要分享虚假信息。
+    <</SYS>>
+    
+    Context: 
+    {context}
+    
+    Question: {question} [/INST]
+---
+kind: Deployment
+apiVersion: apps/v1
+metadata:
+  name: gradio-rag-milvus-vllm-openai
+  labels:
+    app: gradio-rag-milvus-vllm-openai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gradio-rag-milvus-vllm-openai
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: gradio-rag-milvus-vllm-openai
+    spec:
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      affinity: {}
+      terminationGracePeriodSeconds: 120
+      securityContext: {}
+      containers:
+        - resources:
+            limits:
+              cpu: '2'
+              memory: 4Gi
+            requests:
+              cpu: '1'
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /queue/status
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 5
+            periodSeconds: 30
+            successThreshold: 1
+            failureThreshold: 3
+          terminationMessagePath: /dev/termination-log
+          name: server
+          livenessProbe:
+            httpGet:
+              path: /queue/status
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 8
+            periodSeconds: 100
+            successThreshold: 1
+            failureThreshold: 3
+          env:
+            - name: APP_TITLE
+              value: 'Chat with your Knowledge Base'
+            - name: SHOW_TITLE_IMAGE
+              value: 'True'
+            - name: INFERENCE_SERVER_URL
+              value: 'http://vllm.vllm.svc.cluster.local:8000/v1'
+            - name: MODEL_NAME
+              value: 'mistralai/Mistral-7B-Instruct-v0.3'
+            - name: MAX_TOKENS
+              value: '1024'
+            - name: TOP_P
+              value: '0.95'
+            - name: TEMPERATURE
+              value: '0.01'
+            - name: PRESENCE_PENALTY
+              value: '1.03'
+            - name: MILVUS_HOST
+              value: 'vectordb-milvus.milvus.svc.cluster.local'
+            - name: MILVUS_PORT
+              value: '19530'
+            - name: MILVUS_USERNAME
+              value: 'root'
+            - name: MILVUS_PASSWORD
+              value: 'Milvus'
+            - name: MILVUS_COLLECTIONS_FILE
+              value: '/opt/app-root/src/collections.json'
+            - name: DEFAULT_COLLECTION
+              value: 'none'
+            - name: PROMPT_FILE
+              value: 'prompt.txt'
+            - name: MAX_RETRIEVED_DOCS
+              value: '4'
+            - name: SCORE_THRESHOLD
+              value: '0.99'
+          securityContext:
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: http
+              containerPort: 7860
+              protocol: TCP
+          imagePullPolicy: IfNotPresent
+          startupProbe:
+            httpGet:
+              path: /queue/status
+              port: http
+              scheme: HTTP
+            timeoutSeconds: 1
+            periodSeconds: 30
+            successThreshold: 1
+            failureThreshold: 24
+          terminationMessagePolicy: File
+          image: 'quay.io/rh-aiservices-bu/gradio-rag-milvus-vllm-openai:latest'
+          volumeMounts:
+            - name: collections
+              mountPath: /opt/app-root/src/collections.json
+              subPath: collections.json
+            - name: prompt
+              mountPath: /opt/app-root/src/prompt.txt
+              subPath: prompt.txt
+      volumes:
+        - name: collections
+          configMap:
+            name: collections
+            items:
+              - key: collections.json
+                path: collections.json
+            defaultMode: 420
+        - name: prompt
+          configMap:
+            name: prompt
+            items:
+              - key: prompt.txt
+                path: prompt.txt
+            defaultMode: 420
+      dnsPolicy: ClusterFirst
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 1
+  revisionHistoryLimit: 10
+  progressDeadlineSeconds: 600
+---
+kind: Service
+apiVersion: v1
+metadata:
+  name: gradio-rag-milvus-vllm-openai
+  labels:
+    app: gradio-rag-milvus-vllm-openai
+spec:
+  clusterIP: None
+  ipFamilies:
+    - IPv4
+  ports:
+    - name: http
+      protocol: TCP
+      port: 7860
+      targetPort: http
+  type: ClusterIP
+  ipFamilyPolicy: SingleStack
+  sessionAffinity: None
+  selector:
+    app: gradio-rag-milvus-vllm-openai
+---
+kind: Route
+apiVersion: route.openshift.io/v1
+metadata:
+  name: gradio-rag-milvus-vllm-openai
+  labels:
+    app: gradio-rag-milvus-vllm-openai
+spec:
+  to:
+    kind: Service
+    name: gradio-rag-milvus-vllm-openai
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+  wildcardPolicy: None
+---
