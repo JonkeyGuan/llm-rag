@@ -140,7 +140,7 @@ spec:
             successThreshold: 1
             failureThreshold: 24
           terminationMessagePolicy: File
-          image: 'quay.io/jonkey/gradio-rag-milvus-vllm-openai:0.0.9-2'
+          image: 'quay.io/jonkey/gradio-rag-milvus-vllm-openai:0.0.9-4'
           volumeMounts:
             - name: collections
               mountPath: /opt/app-root/src/collections.json
